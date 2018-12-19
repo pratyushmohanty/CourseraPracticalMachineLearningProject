@@ -1,0 +1,361 @@
+---
+title: "PracticalMachineLearningProject"
+author: "Pratyush Mohanty"
+date: "19 December 2018"
+output: html_document
+---
+
+This project is created as a part of the assignment for the "Practical Machine Learning" class in Coursera from John-Hopkins University.
+
+## Synopsis
+
+Using devices such as _Jawbone Up, Nike FuelBand, and Fitbit_ it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the _quantified self movement_ - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. 
+
+
+One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify _how well they do it_. The goal of this project is to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants and predict the manner in which they did the exercise. This is the _"classe"_ variable in the training set. 
+
+### Data Source
+
+The data for this project come from this source: http://groupware.les.inf.puc-rio.br/har.
+
+The training data for this project are available here:
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+The test data are available here:
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+rm(list=ls())
+```
+
+```{r load_libraries, echo=TRUE, warning=FALSE, message=FALSE}
+library(caret)
+library(rattle)
+library(gbm)
+library(ggplot2)
+
+```
+
+## Data Processing - Getting and cleaning data
+
+### Training Set
+
+```{r Download_training_data, cache=TRUE}
+## Download
+if(!file.exists("pml-training.csv"))
+{
+        url_training <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+        download.file(url_training, "pml-training.csv")
+        downloadDate <- date()
+        paste("Data downloaded from \n", url_training, "\n on: ", downloadDate, sep = "")
+}
+## read the file, treat blanks as NAs
+training <- read.csv("pml-training.csv", header=TRUE, na.strings=c(""," ","NA"))
+
+print(paste("The training dataset has ", nrow(training), " rows and ", 
+            ncol(training), " columns.", sep=""))
+
+```
+
+### Testing Set
+
+```{r Download_test_data, cache=TRUE}
+## Download
+if(!file.exists("pml-testing.csv"))
+{
+        url_testing <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+        download.file(url_testing, "pml-testing.csv")
+        downloadDate <- date()
+        paste("Data downloaded from \n", url_testing, "\n on: ", downloadDate, sep = "")
+}
+## load the file, treat blanks as NAs
+testing <- read.csv("pml-testing.csv", header=TRUE, na.strings=c(""," ","NA"))
+
+print(paste("The test dataset has ", nrow(testing), " rows and ", 
+            ncol(testing), " columns.", sep=""))
+
+```
+
+```{r look_at_data}
+str(training)
+```
+
+#### Are there any missing values?
+
+```{r check_missing_values}
+print_na_vals <- function(df, name) {
+        numOfvaluesMissing <- nrow(is.na(df))
+        percentageMissing <- mean(is.na(df))*100
+        
+        paste("There are", format(numOfvaluesMissing, big.mark=","), "(=", 
+              format(round(percentageMissing, 2), big.mark=","),
+              "%) missing values in the", name,"set.", sep = " ")
+}
+
+print_na_vals(training, "training")
+print_na_vals(testing, "testing")
+```
+
+
+```{r find_NA_columns}
+
+nacols <- function(df) {
+    colnames(df)[unlist(lapply(df, function(x) any(is.na(x))))]
+}
+
+na_colnames <- nacols(training)
+
+print(paste("There are ", length(na_colnames), " NA columns.", sep=""))
+```
+
+There are a lot of NA columns, so we'll drop them.
+
+```{r drop_na_columns}
+training <- training[, !names(training) %in% na_colnames]
+testing <- testing[, !names(testing)  %in% na_colnames]
+
+print_na_vals(training, "training")
+print_na_vals(testing, "testing")
+
+print(paste("The training dataset has ", nrow(training), " rows and ", 
+            ncol(training), " columns.", sep=""))
+print(paste("The test dataset has ", nrow(testing), " rows and ", 
+            ncol(testing), " columns.", sep=""))
+
+```
+
+## Analysis
+
+We still have a lot of columns,i.e. predictors.
+
+The first column in the datasets is just the rowid. So we can just drop that column as a feature.
+
+```{r drop_first_colum}
+training <- training[, -1]
+testing <- testing[, -1]
+
+```
+
+By looking at the data, we can also remove some of the other columns like - 
+user_name, raw_timestamp_part_1, cvtd_timestamp, num_window
+
+```{r columns_manually_discarded}
+columns_to_discard <- c("user_name", "raw_timestamp_part_1","raw_timestamp_part_2","cvtd_timestamp","num_window" )
+training <- training[, !colnames(training) %in% columns_to_discard]
+testing <- testing[, !colnames(testing) %in% columns_to_discard]
+
+```
+Remove columns with near zero variance.
+
+```{r check_variance}
+nzv <- nearZeroVar(training)
+training <- training[, -nzv]
+testing  <- testing[, -nzv]
+
+print(dim(training))
+print(dim(testing))
+
+```
+
+Find variables which are highly correlated.
+
+```{r check_correlation}
+#get correlation except the target variable, which is the last column
+data_to_check <- training[, -ncol(training)]
+#get only numeric data
+numeric_data <- data_to_check[, sapply(data_to_check, is.numeric)]
+M <- abs(cor(numeric_data))
+diag(M) <- 0
+which(M > 0.8, arr.ind = TRUE)
+```
+
+There are quite a few variables which seem highly correlated. 
+Thus, it might be a good idea to use PCA for preprocessing the data.
+
+
+__Here's a list of the final list of features.__
+
+```{r final_features}
+names(training)
+```
+
+## Prepare the data
+
+Now that we have clean data, lets try a few models to predict the 'Classe' variable.
+The test dataset doesn't have the output variable 'Classe'.
+
+We'll split the training set to a train/validate set further.
+
+#### Set Seed
+
+```{r set_seed_partition}
+set.seed(1001)
+```
+
+### Split data to Train/Validate/Test
+```{r partition_data_sets}
+
+inTrain = createDataPartition(training$classe, p = 3/4, list = FALSE)
+train_model = training[ inTrain,]
+validate_model = training[-inTrain,]
+
+dim(train_model)
+dim(validate_model)
+dim(testing)
+```
+
+## Model Building
+
+This is a classification problem and the output variable is a factor variable.
+We can try some of the following machine learning models -
+
++ Classification Trees
++ Random Forest
++ Gradient Boosting
+
+### Classification Tree
+
+```{r Classification_Tree_Model, echo=TRUE}
+set.seed(1004)
+model_ctree <- train(classe ~ ., 
+                     data=train_model, 
+                     preProcess="pca",
+                     method="rpart")
+
+fancyRpartPlot(model_ctree$finalModel)
+
+```
+
+#### Evaluate the model
+
+```{r ctree_performance}
+predict_ctree <- predict(model_ctree, validate_model)
+cm_ctree <- confusionMatrix(predict_ctree, validate_model$classe)
+print(cm_ctree)
+
+```
+
+#### Interpretaion
+
+The model does not seem to do well as it's only __36.56%__ accurate.
+
+
+### Random Forest
+
+Train the model with a cross validation of 3 folds.
+
+```{r random_forest, echo=TRUE, message=FALSE, warning=FALSE, results="hide"}
+
+control_rf <- trainControl(method="cv", 
+                           number=3, 
+                           verboseIter=FALSE, 
+                           allowParallel = TRUE)
+set.seed(1004)
+
+model_rf <- train(classe~., 
+                  data=train_model, 
+                  method="rf", 
+                  preProcess="pca",
+                  trControl = control_rf)
+```
+
+```{r print_model_rf}
+print(model_rf)
+```
+
+#### Evaluate the model
+
+```{r rf_performance}
+predict_rf <- predict(model_rf, validate_model)
+cm_rf <- confusionMatrix(predict_rf, validate_model$classe)
+print(cm_rf)
+
+```
+
+The __Random Forest__ approach yields a result with __very high accuracy of 97.82%__.
+This may suggest that this model is overfitting the dataset.
+
+Plotting the model below.
+
+```{r plot_rf_model_accuracy}
+plot(model_rf, main="Accuracy / Num of predictors")
+```
+
+```{r plot_rf_model_error}
+plot(model_rf$finalModel, main="Error / Num of trees")
+```
+
+#### Important Features
+
+```{r rf_imp_vars}
+
+imp_vars_rf <- varImp(model_rf)
+print(imp_vars_rf)
+
+```
+
+The number of predictors giving the highest accuracy is 27. 
+
+Also, after about 33 trees or so, the error does not decrease further significantly.
+
+
+
+### Gradient Boosting
+
+Train the model with a cross validation of 3 folds.
+
+```{r gradient_boosting, echo=TRUE, message=FALSE, warning=FALSE, results="hide"}
+control_gbm <- trainControl(method="cv", 
+                           number=3, 
+                           verboseIter=FALSE, 
+                           allowParallel = TRUE)
+set.seed(1004)
+
+model_gbm <- train(classe~., 
+                   data=train_model, 
+                   method="gbm", 
+                   preProcess="pca",
+                   trControl = control_gbm)
+```
+
+```{r print_model_gbm}
+print(model_gbm)
+```
+
+#### Evaluate the model
+
+```{r gbm_performance}
+predict_gbm <- predict(model_gbm, validate_model)
+cm_gbm <- confusionMatrix(predict_gbm, validate_model$classe)
+print(cm_gbm)
+
+```
+
+The __Gradient Boosting__ approach yields a result also with __a good accuracy of 81.79%__.
+
+Plotting the model below.
+
+```{r plot_gbm_model_accuracy}
+plot(model_gbm)
+```
+
+
+## Conclusion
+
+The __Random Forest__ outperforms the others considered in this analysis and provides the greatest accuracy.
+
+We'll use it to predict the outcome of the testing dataset.
+
+#### Results on the test set
+
+The test set has an additional column, `problem_id` which is not present in the training set.
+So, we'll ignore it and predict on rest of the features.
+
+```{r predict_result}
+results <- predict(model_rf, newdata=testing[, -53])
+print(data.frame(problem_id=testing$problem_id, prediction=results))
+```
