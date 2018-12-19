@@ -2,23 +2,11 @@
 
 This repository has been uploaded to GitHub as a part of the course project for the Practical Machine Learning course in Coursera.
 
+The final knitted HTML file and the R Markdown files are
 
+- PracticalMachineLearningProject.html
+- PracticalMachineLearningProject.Rmd
 
-## Background
-
-Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify _how well they do it_. 
-
-The project uses data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
-
-## Data
-
-The training data for this project are available here:
-
-https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
-
-The test data are available here:
-
-https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
-
-The data for this project come from this source: http://groupware.les.inf.puc-rio.br/har. 
+The same HTML file has also been directly viewed here for ease of access -
+https://rpubs.com/Pratyush/452744
 
